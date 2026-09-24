@@ -6,6 +6,7 @@ const difficultyStyles: Record<Difficulty, string> = {
   Easy: 'bg-easy/10 text-easy border-easy/20',
   Medium: 'bg-medium/10 text-medium border-medium/20',
   Hard: 'bg-hard/10 text-hard border-hard/20',
+  Unknown: 'bg-surface-hover text-ink-muted border-border',
 };
 
 export function DifficultyBadge({ difficulty }: { difficulty: Difficulty }) {
