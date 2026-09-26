@@ -9,6 +9,9 @@ This is an independent learning tracker. External resources are linked to their 
 original platforms. This project is not affiliated with or endorsed by TakeUForward, Striver,
 GeeksforGeeks, or LeetCode.
 
+> **Installer update:** The `v0.1.0` NSIS `.exe` is superseded. Use the MSI from the latest release;
+> new releases no longer publish the NSIS installer.
+
 ## Develop
 
 ```bash
@@ -33,14 +36,14 @@ storage on this device; there is no account, backend, or cloud sync.
 
 ### Install the app
 
-For normal use, download the latest **DSA Command Center `*_x64-setup.exe`** from the GitHub
-Releases page and run it. The installer is per-user and automatically adds both a Start Menu entry
-and a desktop shortcut. Once installed, launch DSA Command Center from that shortcut whenever you want.
+For normal use, download the latest **DSA Command Center `.msi`** from the GitHub
+Releases page and run it. The installer adds both a Start Menu entry and a desktop shortcut.
+Once installed, launch DSA Command Center from that shortcut whenever you want.
 Your progress is saved locally between launches. Use **Settings → Export data** to keep a backup
-or move progress to another computer. The MSI installer is available as an alternative package.
+or move progress to another computer.
 
-Windows may show a SmartScreen warning because releases are not code-signed. Only run an installer
-downloaded from this project's official GitHub Releases page.
+The installer is not code-signed, so Windows may show a publisher warning. Download it only from
+this project's official GitHub Releases page.
 
 Prerequisites for building on Windows: Node.js, Rust (stable), and the Microsoft C++ Build Tools
 with the Windows 10/11 SDK. WebView2 Runtime is required to run the installed app and is normally
@@ -52,10 +55,9 @@ npm run tauri:dev
 npm run tauri:build
 ```
 
-The Windows NSIS and MSI installers are generated under
-`src-tauri/target/release/bundle/`. Pushing a version tag such as `v0.1.0` runs the release workflow
-and publishes both installers as GitHub Release assets. GitHub also provides source ZIP and tar.gz
-archives automatically.
+The Windows MSI installer is generated under `src-tauri/target/release/bundle/msi/`. Pushing a
+version tag such as `v0.1.1` runs the release workflow and publishes the MSI as a GitHub Release
+asset. GitHub also provides source ZIP and tar.gz archives automatically.
 
 - **GitHub Pages:** upload the contents of `dist/` to your repository's Pages branch/folder
   (e.g. `docs/` or `gh-pages`), or use any action that publishes `dist/`.

@@ -1,6 +1,6 @@
 [package]
 name = "dsa-command-center"
-version = "0.1.0"
+version = "0.1.1"
 description = "Independent DSA Learning Tracker"
 authors = ["DSA Command Center"]
 edition = "2021"
