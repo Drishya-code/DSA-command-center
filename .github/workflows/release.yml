@@ -11,6 +11,9 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    env:
+      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -27,8 +30,38 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Import code-signing certificate
+        if: env.WINDOWS_CERTIFICATE != ''
+        shell: pwsh
+        run: |
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'windows-signing.pfx'
+          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $certificate = Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password (ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText)
+          if (-not $certificate) { throw 'The Windows signing certificate could not be imported.' }
+          $configPath = 'src-tauri/tauri.conf.json'
+          $config = Get-Content $configPath -Raw | ConvertFrom-Json -AsHashtable
+          $config.bundle.windows = @{
+            certificateThumbprint = $certificate.Thumbprint
+            digestAlgorithm = 'sha256'
+            timestampUrl = 'http://timestamp.digicert.com'
+          }
+          $config | ConvertTo-Json -Depth 100 | Set-Content $configPath
+          Remove-Item $certificatePath -Force
+
+      - name: Explain unsigned release
+        if: env.WINDOWS_CERTIFICATE == ''
+        run: echo "No code-signing certificate is configured. The MSI will be unsigned and Windows SmartScreen may warn users."
+
       - name: Build installers
         run: npm run tauri:build
+
+      - name: Create SHA-256 checksum
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem 'src-tauri/target/release/bundle/msi/*.msi' | Select-Object -First 1
+          if (-not $installer) { throw 'No MSI installer was produced.' }
+          $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $($installer.Name)" | Set-Content "$($installer.FullName).sha256"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -36,3 +69,4 @@ jobs:
           generate_release_notes: true
           files: |
             src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/msi/*.msi.sha256

@@ -42,8 +42,12 @@ Once installed, launch DSA Command Center from that shortcut whenever you want.
 Your progress is saved locally between launches. Use **Settings → Export data** to keep a backup
 or move progress to another computer.
 
-The installer is not code-signed, so Windows may show a publisher warning. Download it only from
-this project's official GitHub Releases page.
+The installer may show a Windows SmartScreen warning until it is signed and builds publisher
+reputation. Only download it from this project's official GitHub Releases page. Releases include a
+SHA-256 checksum so you can verify the downloaded MSI. To sign releases, configure the repository
+secrets `WINDOWS_CERTIFICATE` (base64-encoded code-signing `.pfx`) and
+`WINDOWS_CERTIFICATE_PASSWORD`; SmartScreen can still warn about new signed files until reputation
+builds.
 
 Prerequisites for building on Windows: Node.js, Rust (stable), and the Microsoft C++ Build Tools
 with the Windows 10/11 SDK. WebView2 Runtime is required to run the installed app and is normally
@@ -56,8 +60,8 @@ npm run tauri:build
 ```
 
 The Windows MSI installer is generated under `src-tauri/target/release/bundle/msi/`. Pushing a
-version tag such as `v0.1.1` runs the release workflow and publishes the MSI as a GitHub Release
-asset. GitHub also provides source ZIP and tar.gz archives automatically.
+version tag such as `v0.1.2` runs the release workflow and publishes the MSI and its SHA-256
+checksum as GitHub Release assets. GitHub also provides source ZIP and tar.gz archives automatically.
 
 - **GitHub Pages:** upload the contents of `dist/` to your repository's Pages branch/folder
   (e.g. `docs/` or `gh-pages`), or use any action that publishes `dist/`.
