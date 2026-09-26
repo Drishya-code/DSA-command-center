@@ -4,6 +4,7 @@ node_modules/
 # Build output
 dist/
 .vite/
+src-tauri/target/
 
 # Local environment files
 .env

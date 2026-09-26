@@ -14,12 +14,8 @@ export const isPastOrToday = (isoDate: string): boolean => {
   return isBefore(target, today) || isSameDay(target, today);
 };
 
-export const isTodayISO = (isoDate: string): boolean => isoDate === todayISO();
-
 export const formatFriendlyDate = (isoDate: string): string =>
   format(parseISO(isoDate), 'EEEE, MMMM d');
-
-export const formatShortDate = (isoDate: string): string => format(parseISO(isoDate), 'MMM d');
 
 export const minutesToLabel = (mins: number): string => {
   const h = Math.floor(mins / 60);

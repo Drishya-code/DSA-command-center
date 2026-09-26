@@ -1,0 +1,16 @@
+[package]
+name = "dsa-command-center"
+version = "0.1.0"
+description = "Independent DSA Learning Tracker"
+authors = ["DSA Command Center"]
+edition = "2021"
+
+[lib]
+name = "dsa_command_center_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }

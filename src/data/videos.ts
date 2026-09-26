@@ -17,11 +17,3 @@ export const videos: Video[] = topics.map((topic) => ({
 
 export const getVideosByTopic = (topicId: string): Video[] =>
   videos.filter((v) => v.topicId === topicId).sort((a, b) => a.order - b.order);
-
-export const getVideoById = (id: string): Video | undefined => videos.find((v) => v.id === id);
-
-export const getTopicYouTubeLink = (topicId: string): string =>
-  topics.find((t) => t.id === topicId)?.youtubeUrl || YOUTUBE_PLAYLIST_URL;
-
-export const getTopicTUFLink = (topicId: string): string =>
-  topics.find((t) => t.id === topicId)?.tufUrl || 'https://takeuforward.org/strivers-a2z-dsa-course/strivers-a2z-dsa-course-sheet-2/';

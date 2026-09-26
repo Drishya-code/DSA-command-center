@@ -114,22 +114,6 @@ export interface WeeklyProgressPoint {
   targetMinutes: number;
 }
 
-export const computeWeeklyProgress = (state: ProgressState): WeeklyProgressPoint[] => {
-  const days = lastNDays(7);
-  const dailyTargetMin =
-    (state.preferences.weeklyHoursTarget * 60) / Math.max(1, state.preferences.studyDaysPerWeek);
-  return days.map((date) => ({
-    date,
-    minutes: state.dailyActivity[date]?.studyMin ?? 0,
-    targetMinutes: Math.round(dailyTargetMin),
-  }));
-};
-
-export const computeWeekMinutesSoFar = (state: ProgressState): number => {
-  const days = lastNDays(7);
-  return days.reduce((sum, d) => sum + (state.dailyActivity[d]?.studyMin ?? 0), 0);
-};
-
 export interface OverallStats {
   totalProblems: number;
   solvedProblems: number;
@@ -140,6 +124,11 @@ export interface OverallStats {
   weekMinutes: number;
   weeklyTargetMinutes: number;
 }
+
+export const computeWeekMinutesSoFar = (state: ProgressState): number => {
+  const days = lastNDays(7);
+  return days.reduce((sum, d) => sum + (state.dailyActivity[d]?.studyMin ?? 0), 0);
+};
 
 export const computeOverallStats = (state: ProgressState, precomputedStats?: TopicStats[]): OverallStats => {
   const allStats = precomputedStats ?? computeAllTopicStats(state);

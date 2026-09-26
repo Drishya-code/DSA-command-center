@@ -121,6 +121,9 @@ export const generateDayPlan = (dateISO: string, state: ProgressState): DayPlan 
 
   for (const problem of byDifficulty) {
     if (remaining <= 0) break;
+    // Never add a task that pushes the plan over its stated time budget.
+    // Keep scanning because later problems may fit even when this one does not.
+    if (problem.estimatedTime > remaining) continue;
     const progress = state.problemProgress[problem.id];
     // A problem is a "retry" if it was previously attempted without being solved,
     // or if it was marked "Could not solve". These surface as priority work.

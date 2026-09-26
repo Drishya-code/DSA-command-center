@@ -62,6 +62,11 @@ export default function App() {
   const [selectedProblem, setSelectedProblem] = useState<Problem | null>(null);
   const mainRef = useRef<HTMLElement>(null);
 
+  useEffect(() => {
+    const background = [document.querySelector<HTMLElement>('.sidebar'), mainRef.current];
+    background.forEach((element) => element?.toggleAttribute('inert', Boolean(selectedProblem)));
+  }, [selectedProblem]);
+
   const today = todayISO();
   const topicStats = useMemo(() => computeAllTopicStats(state), [state]);
   const overall = useMemo(() => computeOverallStats(state, topicStats), [state, topicStats]);
@@ -88,7 +93,7 @@ export default function App() {
       <aside className="sidebar" role="complementary" aria-label="Navigation sidebar">
         <div className="brand">
           <div className="brand-mark" aria-hidden="true">DS</div>
-          <div><strong>DSA Command</strong><span>Personal learning OS</span></div>
+          <div><strong>DSA Command Center</strong><span>Independent DSA Learning Tracker</span></div>
         </div>
         <div className="nav-label" id="workspace-nav-label">WORKSPACE</div>
         <nav aria-labelledby="workspace-nav-label">
@@ -117,7 +122,7 @@ export default function App() {
 
       <main className="main" id="main-content" ref={mainRef} tabIndex={-1}>
         <header className="topbar">
-          <div><div className="eyebrow">{formatFriendlyDate(today)}</div><h1>{pageTitle(page)}</h1></div>
+          <div><div className="eyebrow">{formatFriendlyDate(today)}</div><h1>{page === 'dashboard' ? dashboardGreeting(state.preferences.name) : pageTitle(page)}</h1></div>
           <div className="top-actions">
             <span className="streak-chip" aria-label={`Current streak: ${state.streak.current} days`}>✦ {state.streak.current} day streak</span>
             <span className="avatar" aria-hidden="true">{(state.preferences.name || 'D')[0].toUpperCase()}</span>
@@ -131,28 +136,37 @@ export default function App() {
         {page === 'analytics' && <Analytics {...{state, overall, topicStats, weakTopics}} />}
         {page === 'settings' && <Settings {...{state, updatePreferences, resetProgress, exportData, importData}} />}
       </main>
+        <footer className="app-footer">
+          <p>This is an independent learning tracker. External resources are linked to their respective original platforms. This project is not affiliated with or endorsed by TakeUForward, Striver, GeeksforGeeks, or LeetCode.</p>
+        </footer>
       {selectedProblem && <ProblemModal problem={selectedProblem} state={state} onClose={() => setSelectedProblem(null)} />}
     </div>
   );
 }
 
 function pageTitle(page: Page) { return NAV.find(n => n[0] === page)?.[2] ?? 'Dashboard'; }
+function dashboardGreeting(name: string) {
+  const hour = new Date().getHours();
+  const salutation = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  return `${salutation}${name ? `, ${name}` : ''}.`;
+}
 
 function Dashboard({ state, overall, topicStats, weakTopics, plan, weekPct, setPage, setSelectedProblem }: any) {
   const { completeTaskToday, isTaskCompletedToday } = useProgress();
+  const [showAllTasks, setShowAllTasks] = useState(false);
+  const visibleTasks = showAllTasks ? plan.tasks : plan.tasks.slice(0, 5);
   return <>
     <section className="hero-grid">
       <Card className="hero-card">
-        <div className="hero-kicker">TODAY'S EXECUTION PLAN</div>
-        <h2>{state.preferences.name ? `${state.preferences.name}, ` : ''}stop planning. Start solving.</h2>
-        <p>{plan.tasks.length} focused tasks · {minutesToLabel(plan.totalEstimatedMin)} planned · {minutesToLabel(plan.dailyBudgetMin)} daily budget</p>
-        <div className="plan-list" role="list" aria-label="Today's tasks">{plan.tasks.map((task: any) => {
+        <div className="dashboard-greeting"><div><div className="hero-kicker">A focused session is enough to move forward.</div></div><div className="plan-total"><strong>{minutesToLabel(plan.totalEstimatedMin)}</strong><span>{plan.tasks.length} planned tasks · {minutesToLabel(plan.dailyBudgetMin)} daily budget</span></div></div>
+        <div className="plan-section-head"><h3>Today’s plan</h3><span>{plan.tasks.filter((task: any) => isTaskCompletedToday(task.id)).length} of {plan.tasks.length} complete</span></div>
+        <div className="plan-list" role="list" aria-label="Today's tasks">{visibleTasks.map((task: any) => {
           const done = isTaskCompletedToday(task.id);
           return <div className={'plan-row ' + (done ? 'done' : '')} key={task.id} role="listitem">
             <button
               className="check"
               aria-pressed={done}
-              title={task.kind === 'problem' ? 'Tracks plan completion only — open the problem to record its outcome' : 'Mark task as done for today'}
+              title={task.kind === 'problem' ? 'Tracks plan completion only. Open the problem to record its outcome.' : 'Mark task as done for today'}
               aria-label={`Mark "${task.title}" as ${done ? 'not done' : 'done'}`}
               onClick={() => completeTaskToday(task.id)}
             >{done ? '✓' : ''}</button>
@@ -161,6 +175,7 @@ function Dashboard({ state, overall, topicStats, weakTopics, plan, weekPct, setP
             {task.url && task.kind !== 'problem' && <a className="ghost-btn" href={sanitizeUrl(task.url)} target="_blank" rel="noreferrer">Open ↗<span className="sr-only"> (opens in new tab)</span></a>}
           </div>;
         })}</div>
+        {plan.tasks.length > 5 && <button className="text-btn show-tasks" onClick={() => setShowAllTasks((shown) => !shown)} aria-expanded={showAllTasks}>{showAllTasks ? 'Show less' : `Show all ${plan.tasks.length} tasks`}</button>}
         <p className="muted plan-hint">✓ tracks that you finished the task in your plan. To mark a problem solved, open it via “Work on it” and record the outcome.</p>
       </Card>
       <Card className="focus-card">
@@ -263,7 +278,7 @@ function Settings({ state, updatePreferences, resetProgress, exportData, importD
   <label htmlFor="pref-hours">Weekly hours<input id="pref-hours" className="field" type="number" min="1" max="40" value={state.preferences.weeklyHoursTarget} onChange={e=>updatePreferences({weeklyHoursTarget:Number(e.target.value)})}/></label>
   <label htmlFor="pref-days">Study days<input id="pref-days" className="field" type="number" min="1" max="7" value={state.preferences.studyDaysPerWeek} onChange={e=>updatePreferences({studyDaysPerWeek:Number(e.target.value)})}/></label>
   <label htmlFor="pref-streak">Minimum minutes for streak<input id="pref-streak" className="field" type="number" min="5" max="180" value={state.preferences.minMinutesForStreak} onChange={e=>updatePreferences({minMinutesForStreak:Number(e.target.value)})}/></label>
-</CardBody></Card><Card><CardHeader><div><CardTitle>Data</CardTitle><p className="muted">Progress is stored locally in your browser — export to back it up.</p></div></CardHeader><CardBody><div className="data-box"><strong>Current catalog</strong><span>{problems.length} seeded problems · 19 roadmap topics</span></div><div className="data-box"><strong>Revision cadence</strong><span>{state.preferences.revisionIntervals.join(' → ')} days</span></div>
+</CardBody></Card><Card><CardHeader><div><CardTitle>Data</CardTitle><p className="muted">Progress is stored locally in your browser. Export to back it up.</p></div></CardHeader><CardBody><div className="data-box"><strong>Current catalog</strong><span>{problems.length} seeded problems · 19 roadmap topics</span></div><div className="data-box"><strong>Revision cadence</strong><span>{state.preferences.revisionIntervals.join(' → ')} days</span></div>
   <div className="data-actions">
     <button className="secondary-btn" onClick={doExport}>Export progress (JSON)</button>
     <label className="secondary-btn import-label">Import backup<input type="file" accept="application/json,.json" className="sr-only" onChange={e=>{const f=e.target.files?.[0]; if(f) doImport(f); e.currentTarget.value='';}}/></label>
@@ -299,7 +314,7 @@ function ProblemModal({problem,state,onClose}:{problem:Problem;state:any;onClose
 
   const submitSolve=()=>{solveProblem(problem.id,outcome,notes);logStudyMinutes(problem.estimatedTime,{topicId:problem.topicId,problemIds:[problem.id]});onClose()};
   const isSolved = outcome !== 'Could not solve';
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" ref={modalRef} role="dialog" aria-modal="true" aria-label={`${problem.title} — problem details`} onMouseDown={e=>e.stopPropagation()}><button className="close" aria-label="Close dialog" onClick={onClose}>×</button><span className={'difficulty '+problem.difficulty.toLowerCase()}>{problem.difficulty}</span><h2>{problem.title}</h2><p className="muted">{problem.subtopic} · {problem.platform} · ~{problem.estimatedTime} min</p><div className="modal-actions">
+  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" ref={modalRef} role="dialog" aria-modal="true" aria-label={`${problem.title}: problem details`} onMouseDown={e=>e.stopPropagation()}><button className="close" aria-label="Close dialog" onClick={onClose}>×</button><span className={'difficulty '+problem.difficulty.toLowerCase()}>{problem.difficulty}</span><h2>{problem.title}</h2><p className="muted">{problem.subtopic} · {problem.platform} · ~{problem.estimatedTime} min</p><div className="modal-actions">
     {problem.url && <a className="primary-btn" href={sanitizeUrl(problem.url)} target="_blank" rel="noreferrer">Open problem ↗<span className="sr-only"> (opens in new tab)</span></a>}
     {problem.gfgUrl && <a className="secondary-btn" href={sanitizeUrl(problem.gfgUrl)} target="_blank" rel="noreferrer">GFG ↗<span className="sr-only"> (opens in new tab)</span></a>}
     {problem.leetcodeUrl && <a className="secondary-btn" href={sanitizeUrl(problem.leetcodeUrl)} target="_blank" rel="noreferrer">LeetCode ↗<span className="sr-only"> (opens in new tab)</span></a>}
@@ -309,7 +324,7 @@ function ProblemModal({problem,state,onClose}:{problem:Problem;state:any;onClose
   </div>
   <label htmlFor="outcome-select">Outcome<select id="outcome-select" className="field" value={outcome} onChange={e=>setOutcome(e.target.value as OutcomeType)}><option>Solved independently</option><option>Needed solution</option><option>Could not solve</option></select></label>
   {isSolved && <p className="muted modal-hint">This marks the problem solved and schedules revision in {state.preferences.revisionIntervals.join(', ')} days.</p>}
-  {!isSolved && <p className="muted modal-hint">This records the attempt. The problem stays "Attempted" — solve it later to schedule revisions.</p>}
+  {!isSolved && <p className="muted modal-hint">This records the attempt. The problem stays "Attempted". Solve it later to schedule revisions.</p>}
   <label htmlFor="problem-notes">Notes<textarea id="problem-notes" className="field textarea" value={notes} onChange={e=>{setNotes(e.target.value);setProblemNotes(problem.id,e.target.value)}} placeholder="Approach, insight, edge case..."/></label>
   <div className="mistake-line"><label htmlFor="mistake-select" className="sr-only">Log a mistake type</label><select id="mistake-select" className="field" value={mistake} onChange={e=>setMistake(e.target.value)}><option value="">Log a mistake...</option><option>Logic error</option><option>Edge case</option><option>Complexity</option><option>Concept</option><option>Syntax</option></select><button className="secondary-btn" disabled={!mistake} onClick={()=>{logMistake(problem.id,mistake as MistakeType,notes);setMistake('')}}>Add</button></div><button className="solve-btn" onClick={submitSolve}>{isSolved ? 'Mark solved & schedule revision' : 'Record outcome'}</button></div></div>
 }
