@@ -40,7 +40,9 @@ interface ProgressContextValue {
 
   // problems
   setProblemStatus: (problemId: string, status: ProblemStatus) => void;
+  toggleProblemSolved: (problemId: string) => void;
   recordAttempt: (problemId: string) => void;
+  undoLastAttempt: (problemId: string) => void;
   solveProblem: (problemId: string, outcome: OutcomeType, notes?: string) => void;
   setProblemNotes: (problemId: string, notes: string) => void;
   rateRevision: (problemId: string, rating: RevisionRating) => void;
@@ -204,7 +206,15 @@ function migrateState(raw: ProgressState): ProgressState {
     completedTopicIds: Array.isArray(raw.completedTopicIds) ? raw.completedTopicIds : [],
     currentTopicId: raw.currentTopicId ?? defaults.currentTopicId,
     taskCompletionsToday: raw.taskCompletionsToday ?? {},
-    schemaVersion: typeof raw.schemaVersion === 'number' ? raw.schemaVersion : defaults.schemaVersion,
+    dailyPlans: Object.fromEntries(Object.entries(raw.dailyPlans && typeof raw.dailyPlans === 'object' ? raw.dailyPlans : {})
+      .filter(([date, plan]) => date >= cutoff && plan && typeof plan === 'object' && Array.isArray((plan as any).tasks))
+      .map(([date, plan]) => [date, { ...(plan as any), date }])),
+    plannerPreferences: {
+      dailyBudgetMin: Math.min(480, Math.max(15, Number(raw.plannerPreferences?.dailyBudgetMin) || 60)),
+      preferredTopicIds: Array.isArray(raw.plannerPreferences?.preferredTopicIds) ? raw.plannerPreferences.preferredTopicIds.filter((id) => typeof id === 'string') : [],
+      difficultyPreference: Array.isArray(raw.plannerPreferences?.difficultyPreference) ? raw.plannerPreferences.difficultyPreference.filter((value) => ['Easy', 'Medium', 'Hard'].includes(value)) : ['Easy', 'Medium', 'Hard'],
+    },
+    schemaVersion: defaults.schemaVersion,
   };
 
   // 2. Deduplicate completedTopicIds
@@ -253,6 +263,11 @@ function migrateState(raw: ProgressState): ProgressState {
       outcome: progress.outcome,
       lastAttempted: progress.lastAttempted,
       lastSolved: progress.lastSolved,
+      completedAt: typeof progress.completedAt === 'string' ? progress.completedAt : undefined,
+      attemptUndo: progress.attemptUndo && typeof progress.attemptUndo.attemptedAt === 'string'
+        && typeof progress.attemptUndo.previousCount === 'number'
+        && validStatuses.has(progress.attemptUndo.previousStatus)
+        ? progress.attemptUndo : undefined,
       notes: progress.notes,
     };
   }
@@ -351,16 +366,29 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
     (problemId: string, status: ProblemStatus) => {
       setState((s) => {
         const existing = getOrCreateProblemProgress(s, problemId);
-        return { ...s, problemProgress: { ...s.problemProgress, [problemId]: { ...existing, status } } };
+        const solved = status === 'Solved' || status === 'Mastered';
+        const wasSolved = existing.status === 'Solved' || existing.status === 'Mastered';
+        return { ...s, problemProgress: { ...s.problemProgress, [problemId]: { ...existing, status, attemptUndo: undefined, ...(solved ? { lastSolved: wasSolved ? existing.lastSolved ?? todayISO() : todayISO(), completedAt: wasSolved ? existing.completedAt ?? new Date().toISOString() : new Date().toISOString() } : { lastSolved: undefined, completedAt: undefined }) } } };
       });
     },
     [setState],
   );
 
+  const toggleProblemSolved = useCallback((problemId: string) => {
+    setState((s) => {
+      const existing = getOrCreateProblemProgress(s, problemId);
+      const solved = existing.status === 'Solved' || existing.status === 'Mastered';
+      if (solved) return { ...s, problemProgress: { ...s.problemProgress, [problemId]: { ...existing, status: 'Attempted', outcome: undefined, revisionSchedule: [], completedAt: undefined, lastSolved: undefined, attemptUndo: undefined } } };
+      const date = todayISO();
+      return { ...s, problemProgress: { ...s.problemProgress, [problemId]: { ...existing, status: 'Solved', outcome: 'Solved independently', lastSolved: date, completedAt: new Date().toISOString(), attemptUndo: undefined, revisionSchedule: buildRevisionSchedule(date, s.preferences.revisionIntervals) } } };
+    });
+  }, [setState]);
+
   const recordAttempt = useCallback(
     (problemId: string) => {
       setState((s) => {
         const existing = getOrCreateProblemProgress(s, problemId);
+        const attemptedAt = new Date().toISOString();
         const nextStatus = existing.status === 'Not Started' ? 'Attempted' : existing.status;
         return {
           ...s,
@@ -371,6 +399,12 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
               status: nextStatus,
               attemptCount: existing.attemptCount + 1,
               lastAttempted: todayISO(),
+              attemptUndo: {
+                attemptedAt,
+                previousCount: existing.attemptCount,
+                previousStatus: existing.status,
+                previousLastAttempted: existing.lastAttempted,
+              },
             },
           },
         };
@@ -378,6 +412,27 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
     },
     [setState],
   );
+
+  const undoLastAttempt = useCallback((problemId: string) => {
+    setState((s) => {
+      const existing = s.problemProgress[problemId];
+      const undo = existing?.attemptUndo;
+      if (!existing || !undo || existing.attemptCount !== undo.previousCount + 1) return s;
+      return {
+        ...s,
+        problemProgress: {
+          ...s.problemProgress,
+          [problemId]: {
+            ...existing,
+            attemptCount: undo.previousCount,
+            status: undo.previousStatus,
+            lastAttempted: undo.previousLastAttempted,
+            attemptUndo: undefined,
+          },
+        },
+      };
+    });
+  }, [setState]);
 
   const solveProblem = useCallback(
     (problemId: string, outcome: OutcomeType, notes?: string) => {
@@ -398,6 +453,8 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
               attemptCount: existing.attemptCount + 1,
               lastAttempted: today,
               lastSolved: isSolved ? today : existing.lastSolved,
+              completedAt: isSolved ? new Date().toISOString() : undefined,
+              attemptUndo: undefined,
               notes: notes ?? existing.notes,
               revisionSchedule: isSolved
                 ? buildRevisionSchedule(today, s.preferences.revisionIntervals)
@@ -500,8 +557,8 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
       setState((s) => {
         const today = todayISO();
         const existing = s.taskCompletionsToday[today] ?? [];
-        if (existing.includes(taskId)) return s;
-        return { ...s, taskCompletionsToday: { ...s.taskCompletionsToday, [today]: [...existing, taskId] } };
+        const next = existing.includes(taskId) ? existing.filter((id) => id !== taskId) : [...existing, taskId];
+        return { ...s, taskCompletionsToday: { ...s.taskCompletionsToday, [today]: next } };
       });
     },
     [setState],
@@ -534,12 +591,13 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
     [setState],
   );
 
-  const exportData = useCallback(() => JSON.stringify(state), [state]);
+  const exportData = useCallback(() => JSON.stringify({ app: 'DSA Command Center', version: 1, exportedAt: new Date().toISOString(), progress: state }, null, 2), [state]);
 
   const importData = useCallback(
     (json: string): { ok: boolean; error?: string } => {
       try {
-        const parsed = JSON.parse(json) as Partial<ProgressState>;
+        const envelope = JSON.parse(json) as { app?: string; version?: number; progress?: Partial<ProgressState> } & Partial<ProgressState>;
+        const parsed = (envelope.progress ?? envelope) as Partial<ProgressState>;
         if (!parsed || typeof parsed !== 'object' || !('preferences' in parsed)) {
           return { ok: false, error: 'This file doesn\u2019t look like a DSA Tracker backup.' };
         }
@@ -579,7 +637,9 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
       markVideoWatched,
       setVideoNotes,
       setProblemStatus,
+      toggleProblemSolved,
       recordAttempt,
+      undoLastAttempt,
       solveProblem,
       setProblemNotes,
       rateRevision,
@@ -602,7 +662,9 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
       markVideoWatched,
       setVideoNotes,
       setProblemStatus,
+      toggleProblemSolved,
       recordAttempt,
+      undoLastAttempt,
       solveProblem,
       setProblemNotes,
       rateRevision,

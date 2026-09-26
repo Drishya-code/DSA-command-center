@@ -1,7 +1,7 @@
 import type { ProgressState, UserPreferences } from '@/types';
 import { topics } from './dsaRoadmap';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const defaultPreferences: UserPreferences = {
   onboarded: false,
@@ -27,6 +27,12 @@ export const createDefaultState = (): ProgressState => ({
   completedTopicIds: [],
   currentTopicId: topics[0]?.id ?? null,
   taskCompletionsToday: {},
+  dailyPlans: {},
+  plannerPreferences: {
+    dailyBudgetMin: 60,
+    preferredTopicIds: [],
+    difficultyPreference: ['Easy', 'Medium', 'Hard'],
+  },
   schemaVersion: SCHEMA_VERSION,
 });
 

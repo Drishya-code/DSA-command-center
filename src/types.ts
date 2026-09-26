@@ -107,6 +107,15 @@ export interface ProblemProgress {
   outcome?: OutcomeType;
   lastAttempted?: string;
   lastSolved?: string;
+  /** Exact solve time when available; legacy records keep only lastSolved. */
+  completedAt?: string;
+  /** Snapshot needed to safely undo only the most recent logged attempt. */
+  attemptUndo?: {
+    attemptedAt: string;
+    previousCount: number;
+    previousStatus: ProblemStatus;
+    previousLastAttempted?: string;
+  };
   notes?: string;
 }
 
@@ -159,7 +168,15 @@ export interface ProgressState {
   currentTopicId: string | null;
   /** taskId[] completed today, keyed by ISO date. */
   taskCompletionsToday: Record<string, string[]>;
+  dailyPlans: Record<string, DayPlan>;
+  plannerPreferences: PlannerPreferences;
   schemaVersion: number;
+}
+
+export interface PlannerPreferences {
+  dailyBudgetMin: number;
+  preferredTopicIds: string[];
+  difficultyPreference: Difficulty[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -202,6 +219,7 @@ export interface ScheduledTask {
   url?: string;
   priorityLabel: string;
   priorityRank: number;
+  reason?: string;
 }
 
 export interface DayPlan {

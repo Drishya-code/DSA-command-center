@@ -8,6 +8,25 @@ import { getDueRevisions } from './revision';
 const REVISION_TASK_MIN = 15;
 const MAX_REVISION_TASKS_WEEKDAY = 3;
 
+// Topic-specific estimates (Easy / Medium / Hard), in minutes. Topics are
+// keyed by the IDs present in this repository's roadmap data.
+const TOPIC_MINUTES: Record<string, [number, number, number]> = {
+  fundamentals: [15, 25, 40], sorting: [15, 25, 35], arrays: [15, 25, 40],
+  hashing: [15, 25, 35], 'binary-search': [15, 30, 45], recursion: [25, 40, 60],
+  'linked-list': [20, 30, 45], 'bit-manipulation': [20, 30, 45], greedy: [20, 35, 50],
+  'sliding-window': [20, 35, 50], 'stack-queue': [20, 35, 50], 'binary-trees': [25, 40, 60],
+  bst: [20, 35, 50], heaps: [20, 35, 50], graphs: [25, 45, 60], dp: [30, 50, 75],
+  tries: [25, 40, 55], 'advanced-strings': [25, 40, 60], maths: [20, 35, 50],
+};
+
+export const estimateProblemMinutes = (problem: ReturnType<typeof getProblemById>): number => {
+  if (!problem) return 30;
+  if (Number.isFinite(problem.estimatedTime) && problem.estimatedTime >= 5 && problem.estimatedTime <= 120) return problem.estimatedTime;
+  const band = TOPIC_MINUTES[problem.topicId];
+  const idx = problem.difficulty === 'Easy' ? 0 : problem.difficulty === 'Hard' ? 2 : 1;
+  return band?.[idx] ?? (idx === 0 ? 20 : idx === 2 ? 45 : 30);
+};
+
 const isSunday = (dateISO: string): boolean => {
   // Parse date components directly to avoid timezone issues with `new Date('YYYY-MM-DDT00:00:00')`
   const [year, month, day] = dateISO.split('-').map(Number);
@@ -53,7 +72,7 @@ const makeTaskId = (dateISO: string, kind: string, refId: string): string =>
   `task-${dateISO}-${kind}-${refId}`;
 
 export const generateDayPlan = (dateISO: string, state: ProgressState): DayPlan => {
-  const dailyBudgetMin = getDailyBudgetMinutes(state, dateISO);
+  const dailyBudgetMin = state.plannerPreferences?.dailyBudgetMin ?? getDailyBudgetMinutes(state, dateISO);
   const tasks: ScheduledTask[] = [];
   let remaining = dailyBudgetMin;
 
@@ -61,6 +80,7 @@ export const generateDayPlan = (dateISO: string, state: ProgressState): DayPlan 
   const due = getDueRevisions(state.problemProgress);
   const maxRevisions = isSunday(dateISO) ? due.length : Math.min(due.length, MAX_REVISION_TASKS_WEEKDAY);
   for (let i = 0; i < maxRevisions; i++) {
+    if (remaining < REVISION_TASK_MIN) break;
     const problem = getProblemById(due[i].problemId);
     if (!problem) continue;
     tasks.push({
@@ -81,11 +101,18 @@ export const generateDayPlan = (dateISO: string, state: ProgressState): DayPlan 
   }
 
   // ── 2. Current topic: next unwatched video ────────────────────────
-  const topic = getEffectiveCurrentTopic(state);
-  const videos = getVideosByTopic(topic.id);
-  const nextVideo = videos.find((v) => !state.videoProgress[v.id]?.watched);
+  const preferredIds = state.plannerPreferences?.preferredTopicIds ?? [];
+  const eligibleTopics = (preferredIds.length ? orderedTopics.filter((t) => preferredIds.includes(t.id)) : orderedTopics)
+    .filter((t) => computeTopicStats(t, state).status !== 'Completed');
+  const topic = eligibleTopics.sort((a, b) => {
+    const aStats = computeTopicStats(a, state), bStats = computeTopicStats(b, state);
+    return aStats.progressPct - bStats.progressPct || a.order - b.order;
+  })[0] ?? getEffectiveCurrentTopic(state);
+  const nextVideo = eligibleTopics.flatMap((candidate) => getVideosByTopic(candidate.id)
+    .filter((v) => !state.videoProgress[v.id]?.watched).map((video) => ({ video, candidate })))
+    .map((x) => x).find((x) => x.candidate.id === topic.id)?.video;
 
-  if (nextVideo && remaining > 0) {
+  if (nextVideo && nextVideo.durationMin <= remaining) {
     tasks.push({
       id: makeTaskId(dateISO, 'video', nextVideo.id),
       kind: 'video',
@@ -103,14 +130,15 @@ export const generateDayPlan = (dateISO: string, state: ProgressState): DayPlan 
   }
 
   // ── 3. Current topic: unsolved problems, difficulty-ordered ───────
-  const topicProblems = getProblemsByTopic(topic.id);
-  const unsolved = topicProblems.filter((p) => {
-    const progress = state.problemProgress[p.id];
-    return !progress || (progress.status !== 'Solved' && progress.status !== 'Mastered');
+  const selectedTopics = eligibleTopics.length ? eligibleTopics : [topic];
+  const selectedDifficulties = state.plannerPreferences?.difficultyPreference?.length ? state.plannerPreferences.difficultyPreference : ['Easy', 'Medium', 'Hard'];
+  const unsolved = selectedTopics.flatMap((selectedTopic) => getProblemsByTopic(selectedTopic.id).map((p) => ({ ...p, selectedTopic }))).filter(({ id: problemId, difficulty }) => {
+    const progress = state.problemProgress[problemId];
+    return (difficulty === 'Unknown' || selectedDifficulties.includes(difficulty)) && (!progress || (progress.status !== 'Solved' && progress.status !== 'Mastered'));
   });
 
   const byDifficulty = [...unsolved].sort((a, b) => {
-    const prefOrder = state.preferences.difficultyPreference;
+    const prefOrder = state.plannerPreferences?.difficultyPreference?.length ? state.plannerPreferences.difficultyPreference : state.preferences.difficultyPreference;
     const aIdx = prefOrder.indexOf(a.difficulty);
     const bIdx = prefOrder.indexOf(b.difficulty);
     // Fallback: treat missing difficulty as last
@@ -123,7 +151,8 @@ export const generateDayPlan = (dateISO: string, state: ProgressState): DayPlan 
     if (remaining <= 0) break;
     // Never add a task that pushes the plan over its stated time budget.
     // Keep scanning because later problems may fit even when this one does not.
-    if (problem.estimatedTime > remaining) continue;
+    const estimatedMin = estimateProblemMinutes(problem);
+    if (estimatedMin > remaining) continue;
     const progress = state.problemProgress[problem.id];
     // A problem is a "retry" if it was previously attempted without being solved,
     // or if it was marked "Could not solve". These surface as priority work.
@@ -136,16 +165,17 @@ export const generateDayPlan = (dateISO: string, state: ProgressState): DayPlan 
       kind: 'problem',
       title: `Solve: ${problem.title}`,
       subtitle: problem.subtopic,
-      topicId: topic.id,
-      topicTitle: topic.title,
+      topicId: problem.topicId,
+      topicTitle: problem.selectedTopic.title,
       difficulty: problem.difficulty,
-      estimatedMin: problem.estimatedTime,
+      estimatedMin,
       refId: problem.id,
       url: problem.url,
       priorityLabel: strugglingHere ? 'Retry — Previously Struggled' : 'New Problem',
       priorityRank: strugglingHere ? 2 : 3,
+      reason: strugglingHere ? 'Prioritizes a problem you have attempted before.' : `Selected from ${problem.selectedTopic.title} to fit today's study time.`,
     });
-    remaining -= problem.estimatedTime;
+    remaining -= estimatedMin;
   }
 
   // ── 4. Fallback: nothing left anywhere → pure revision/recap day ──

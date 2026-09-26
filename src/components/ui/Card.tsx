@@ -14,11 +14,11 @@ export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
 }
 
 export function CardHeader({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={clsx('flex items-center justify-between gap-3 p-4 pb-0', className)} {...props} />;
+  return <div className={clsx('flex items-center justify-between gap-3 p-5 pb-0', className)} {...props} />;
 }
 
 export function CardBody({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={clsx('p-4', className)} {...props} />;
+  return <div className={clsx('p-5', className)} {...props} />;
 }
 
 export function CardTitle({ className, ...props }: HTMLAttributes<HTMLHeadingElement>) {
