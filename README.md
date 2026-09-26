@@ -36,11 +36,18 @@ storage on this device; there is no account, backend, or cloud sync.
 
 ### Install the app
 
-For normal use, download the latest **DSA Command Center `.msi`** from the GitHub
-Releases page and run it. The installer adds both a Start Menu entry and a desktop shortcut.
-Once installed, launch DSA Command Center from that shortcut whenever you want.
-Your progress is saved locally between launches. Use **Settings → Export data** to keep a backup
-or move progress to another computer.
+#### Recommended: install from the browser
+
+Open the [DSA Command Center website](https://drishya-code.github.io/DSA-command-center/) in
+Microsoft Edge, then select **… → Apps → Install this site as an app**. This installs the web app
+without downloading or running an unsigned Windows installer. The site can continue to work offline
+after its first successful load. Progress remains stored locally in that browser profile.
+
+#### Optional: install the Windows MSI
+
+Download the latest **DSA Command Center `.msi`** from the GitHub Releases page and run it. The
+installer adds a Start Menu entry and desktop shortcut. Progress stays on this device. Use
+**Settings → Export progress** to keep a backup or move progress to another computer.
 
 The installer may show a Windows SmartScreen warning until it is signed and builds publisher
 reputation. Only download it from this project's official GitHub Releases page. Releases include a
