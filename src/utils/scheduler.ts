@@ -102,8 +102,7 @@ export const generateDayPlan = (dateISO: string, state: ProgressState): DayPlan 
 
   // ── 2. Current topic: next unwatched video ────────────────────────
   const preferredIds = state.plannerPreferences?.preferredTopicIds ?? [];
-  const eligibleTopics = (preferredIds.length ? orderedTopics.filter((t) => preferredIds.includes(t.id)) : orderedTopics)
-    .filter((t) => computeTopicStats(t, state).status !== 'Completed');
+  const eligibleTopics = (preferredIds.length ? orderedTopics.filter((t) => preferredIds.includes(t.id)) : orderedTopics);
   const topic = eligibleTopics.sort((a, b) => {
     const aStats = computeTopicStats(a, state), bStats = computeTopicStats(b, state);
     return aStats.progressPct - bStats.progressPct || a.order - b.order;
