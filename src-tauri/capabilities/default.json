@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "description": "Main window: allows the opener plugin to open external http(s)/mailto/tel links (YouTube, GFG, LeetCode, TUF) in the system browser.",
+  "identifier": "default",
+  "permissions": ["opener:allow-open-url", "opener:allow-default-urls"],
+  "windows": ["main"]
+}
