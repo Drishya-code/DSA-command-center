@@ -2,9 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { generateDayPlan } from '../utils/scheduler';
 import { computeTopicStats } from '../utils/analytics';
 import { topics } from '../data/dsaRoadmap';
+import type { ProgressState } from '../types';
 
 describe('DSA Command Center Core Logic', () => {
-  const baseState = {
+  const baseState: ProgressState = {
     completedTopicIds: [],
     problemProgress: {},
     videoProgress: {},
