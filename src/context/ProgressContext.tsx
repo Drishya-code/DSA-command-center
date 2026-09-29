@@ -55,7 +55,7 @@ interface ProgressContextValue {
   addSession: (session: Omit<StudySession, 'id'>) => void;
 
   // tasks
-  completeTaskToday: (taskId: string) => void;
+  completeTaskToday: (taskId: string, minutes?: number) => void;
   isTaskCompletedToday: (taskId: string) => boolean;
 
   // topic navigation
@@ -378,9 +378,26 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
     setState((s) => {
       const existing = getOrCreateProblemProgress(s, problemId);
       const solved = existing.status === 'Solved' || existing.status === 'Mastered';
-      if (solved) return { ...s, problemProgress: { ...s.problemProgress, [problemId]: { ...existing, status: 'Attempted', outcome: undefined, revisionSchedule: [], completedAt: undefined, lastSolved: undefined, attemptUndo: undefined } } };
       const date = todayISO();
-      return { ...s, problemProgress: { ...s.problemProgress, [problemId]: { ...existing, status: 'Solved', outcome: 'Solved independently', lastSolved: date, completedAt: new Date().toISOString(), attemptUndo: undefined, revisionSchedule: buildRevisionSchedule(date, s.preferences.revisionIntervals) } } };
+      // Track study minutes + solve count for quick-solve toggles (plan rows)
+      // so weekly momentum reflects them, mirroring the modal's accounting.
+      const problem = getProblemById(problemId);
+      const est = problem?.estimatedTime ?? 0;
+      let dailyActivity = s.dailyActivity;
+      if (est > 0) {
+        const entry = s.dailyActivity[date] ?? { date, studyMin: 0, problemsSolved: 0, videosWatched: 0 };
+        dailyActivity = {
+          ...s.dailyActivity,
+          [date]: {
+            ...entry,
+            studyMin: Math.max(0, entry.studyMin + (solved ? -est : est)),
+            problemsSolved: Math.max(0, entry.problemsSolved + (solved ? -1 : 1)),
+            videosWatched: entry.videosWatched,
+          },
+        };
+      }
+      if (solved) return { ...s, problemProgress: { ...s.problemProgress, [problemId]: { ...existing, status: 'Attempted', outcome: undefined, revisionSchedule: [], completedAt: undefined, lastSolved: undefined, attemptUndo: undefined } }, dailyActivity };
+      return { ...s, problemProgress: { ...s.problemProgress, [problemId]: { ...existing, status: 'Solved', outcome: 'Solved independently', lastSolved: date, completedAt: new Date().toISOString(), attemptUndo: undefined, revisionSchedule: buildRevisionSchedule(date, s.preferences.revisionIntervals) } }, dailyActivity };
     });
   }, [setState]);
 
@@ -553,12 +570,29 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
   );
 
   const completeTaskToday = useCallback(
-    (taskId: string) => {
+    (taskId: string, minutes?: number) => {
       setState((s) => {
         const today = todayISO();
         const existing = s.taskCompletionsToday[today] ?? [];
-        const next = existing.includes(taskId) ? existing.filter((id) => id !== taskId) : [...existing, taskId];
-        return { ...s, taskCompletionsToday: { ...s.taskCompletionsToday, [today]: next } };
+        const alreadyDone = existing.includes(taskId);
+        const next = alreadyDone ? existing.filter((id) => id !== taskId) : [...existing, taskId];
+        let dailyActivity = s.dailyActivity;
+        // Track study minutes for every completion (not just modal submissions)
+        // so the weekly-momentum ring and 7-day bars reflect checked-off work.
+        if (minutes && minutes > 0) {
+          const entry = s.dailyActivity[today] ?? { date: today, studyMin: 0, problemsSolved: 0, videosWatched: 0 };
+          const delta = alreadyDone ? -minutes : minutes;
+          dailyActivity = {
+            ...s.dailyActivity,
+            [today]: {
+              ...entry,
+              studyMin: Math.max(0, entry.studyMin + delta),
+              problemsSolved: entry.problemsSolved,
+              videosWatched: entry.videosWatched,
+            },
+          };
+        }
+        return { ...s, taskCompletionsToday: { ...s.taskCompletionsToday, [today]: next }, dailyActivity };
       });
     },
     [setState],

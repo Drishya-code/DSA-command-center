@@ -178,7 +178,7 @@ function Dashboard({ state, overall, topicStats, weakTopics, plan, weekPct, setP
               className="check"
               aria-pressed={done}
               aria-label={`Mark "${task.title}" as ${done ? 'not done' : 'done'}`}
-              onClick={() => task.kind === 'problem' ? toggleProblemSolved(task.refId) : completeTaskToday(task.id)}
+              onClick={() => task.kind === 'problem' ? toggleProblemSolved(task.refId) : completeTaskToday(task.id, task.estimatedMin)}
             >{done ? '✓' : ''}</button>
             <div className="task-copy"><strong>{task.title}</strong><span>{task.topicTitle || task.subtitle} · {task.difficulty || task.priorityLabel} · {minutesToLabel(task.estimatedMin)}</span>{task.reason && <small>{task.reason}</small>}</div>
             {task.kind === 'problem' && <button className="ghost-btn" aria-label={`Open details for ${task.title}`} onClick={() => { const p = problems.find((x: Problem) => x.id === task.refId); if (p) setSelectedProblem(p); }}>Open</button>}
