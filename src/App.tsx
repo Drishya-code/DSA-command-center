@@ -62,6 +62,11 @@ export default function App() {
   const [selectedProblem, setSelectedProblem] = useState<Problem | null>(null);
   const mainRef = useRef<HTMLElement>(null);
 
+  // Apply theme from preferences to document root
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', state.preferences.theme);
+  }, [state.preferences.theme]);
+
   useEffect(() => {
     const background = [document.querySelector<HTMLElement>('.sidebar'), mainRef.current];
     background.forEach((element) => element?.toggleAttribute('inert', Boolean(selectedProblem)));
@@ -88,6 +93,10 @@ export default function App() {
   const skipToMain = useCallback(() => {
     mainRef.current?.focus();
   }, []);
+
+  const toggleTheme = useCallback(() => {
+    updatePreferences({ theme: state.preferences.theme === 'light' ? 'dark' : 'light' });
+  }, [state.preferences.theme, updatePreferences]);
 
   return (
     <div className="app-shell">
@@ -130,6 +139,14 @@ export default function App() {
           <div className="top-actions">
             <span className="streak-chip" aria-label={`Current streak: ${state.streak.current} days`}>✦ {state.streak.current} day streak</span>
             <span className="avatar" aria-hidden="true">{(state.preferences.name || 'D')[0].toUpperCase()}</span>
+            <button
+              className="theme-toggle"
+              aria-label={`Switch to ${state.preferences.theme === 'light' ? 'dark' : 'light'} mode`}
+              onClick={toggleTheme}
+            >
+              <span className="icon" aria-hidden="true">{state.preferences.theme === 'light' ? '☾' : '☀'}</span>
+              <span>{state.preferences.theme === 'light' ? 'Dark' : 'Light'}</span>
+            </button>
           </div>
         </header>
 
