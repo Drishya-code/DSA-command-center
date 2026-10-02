@@ -6,7 +6,11 @@ import {
   type Dispatch,
   type ReactNode,
   type SetStateAction,
+  useEffect,
+  useRef,
+  useState,
 } from 'react';
+import type { User } from '@supabase/supabase-js';
 import type {
   MistakeLogEntry,
   MistakeType,
@@ -18,17 +22,22 @@ import type {
   StudySession,
   UserPreferences,
 } from '@/types';
-import { useLocalStorage } from '@/hooks/useLocalStorage';
 import { createDefaultState, sanitizePreferences, PROGRESS_STORAGE_KEY } from '@/data/defaultState';
 import { getProblemById } from '@/data/problems';
-import { todayISO, addDaysISO } from '@/utils/date';
+import { todayISO } from '@/utils/date';
 import { buildRevisionSchedule, completeNextRevision } from '@/utils/revision';
 import { computeAllTopicStats } from '@/utils/analytics';
 import { sanitizeUrl, hasNoPrototypeKeys } from '@/utils/sanitize';
+import { loadProgress, importLocalProgress, mergeProgress, changedProgressTables } from '@/lib/progressRepository';
+import { useAuth } from '@/context/AuthContext';
+import { DebouncedSyncQueue } from '@/lib/debouncedSyncQueue';
 
 interface ProgressContextValue {
   state: ProgressState;
   setState: Dispatch<SetStateAction<ProgressState>>;
+  syncState: 'loading' | 'synced' | 'offline' | 'syncing';
+  syncError: string | null;
+  retrySync: () => void;
 
   // preferences / onboarding
   updatePreferences: (patch: Partial<UserPreferences>) => void;
@@ -172,6 +181,30 @@ function getOrCreateProblemProgress(state: ProgressState, problemId: string): Pr
   );
 }
 
+let mistakeIdFallbackCounter = 0;
+
+/** Create a collision-resistant local ID; repository sync converts non-UUID IDs deterministically. */
+export function createMistakeId(): string {
+  const cryptoApi = globalThis.crypto;
+  if (typeof cryptoApi?.randomUUID === 'function') {
+    return `mistake-${cryptoApi.randomUUID()}`;
+  }
+
+  mistakeIdFallbackCounter += 1;
+  const randomPart = (() => {
+    if (typeof cryptoApi?.getRandomValues === 'function') {
+      const bytes = cryptoApi.getRandomValues(new Uint8Array(16));
+      return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    }
+    return `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+  })();
+  return `mistake-${Date.now()}-${mistakeIdFallbackCounter}-${randomPart}`;
+}
+
+export function prependMistake(state: ProgressState, entry: MistakeLogEntry): ProgressState {
+  return { ...state, mistakes: [entry, ...state.mistakes] };
+}
+
 /**
  * Migrate and repair loaded state to ensure all required fields exist,
  * duplicates are removed, and stale data is cleaned up.
@@ -185,9 +218,6 @@ function migrateState(raw: ProgressState): ProgressState {
   }
 
   const defaults = createDefaultState();
-  const today = todayISO();
-  const cutoff = addDaysISO(today, -30); // keep last 30 days of taskCompletions
-
   // 1. Ensure all top-level fields exist with correct types
   const state: ProgressState = {
     ...defaults,
@@ -207,7 +237,7 @@ function migrateState(raw: ProgressState): ProgressState {
     currentTopicId: raw.currentTopicId ?? defaults.currentTopicId,
     taskCompletionsToday: raw.taskCompletionsToday ?? {},
     dailyPlans: Object.fromEntries(Object.entries(raw.dailyPlans && typeof raw.dailyPlans === 'object' ? raw.dailyPlans : {})
-      .filter(([date, plan]) => date >= cutoff && plan && typeof plan === 'object' && Array.isArray((plan as any).tasks))
+      .filter(([, plan]) => plan && typeof plan === 'object' && Array.isArray((plan as any).tasks))
       .map(([date, plan]) => [date, { ...(plan as any), date }])),
     plannerPreferences: {
       dailyBudgetMin: Math.min(480, Math.max(15, Number(raw.plannerPreferences?.dailyBudgetMin) || 60)),
@@ -220,10 +250,10 @@ function migrateState(raw: ProgressState): ProgressState {
   // 2. Deduplicate completedTopicIds
   state.completedTopicIds = [...new Set(state.completedTopicIds)];
 
-  // 3. Clean up old taskCompletionsToday entries (keep last 30 days)
+  // 3. Preserve historical task completions for cloud migration and analytics.
   const cleanedTasks: Record<string, string[]> = {};
   for (const [date, taskIds] of Object.entries(state.taskCompletionsToday)) {
-    if (date >= cutoff && Array.isArray(taskIds)) {
+    if (Array.isArray(taskIds)) {
       cleanedTasks[date] = [...new Set(taskIds)]; // also deduplicate task IDs
     }
   }
@@ -306,12 +336,178 @@ function migrateState(raw: ProgressState): ProgressState {
   return state;
 }
 
-export function ProgressProvider({ children }: { children: ReactNode }) {
-  const [state, setState, resetStorage] = useLocalStorage<ProgressState>(
-    PROGRESS_STORAGE_KEY,
-    createDefaultState,
-    migrateState,
-  );
+export function ProgressProvider({ children, user }: { children: ReactNode; user: User }) {
+  const [state, setStateRaw] = useState<ProgressState>(createDefaultState);
+  const [ready, setReady] = useState(false);
+  const [syncState, setSyncState] = useState<ProgressContextValue['syncState']>('loading');
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [migrationChoice, setMigrationChoice] = useState<{ cloud: ProgressState; local: ProgressState } | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
+  const stateRef = useRef(state);
+  const baselineRef = useRef<ProgressState>(createDefaultState());
+  const readyRef = useRef(false);
+  const localRevisionRef = useRef(0);
+  const syncQueueRef = useRef<DebouncedSyncQueue<{ merged: ProgressState; revision: number } | null> | null>(null);
+  const syncQueueCleanupRef = useRef<(() => void) | null>(null);
+  useAuth();
+
+  const retrySync = useCallback(() => {
+    if (syncQueueRef.current?.hasPendingWork) syncQueueRef.current.retry();
+    else setRetryCount((n) => n + 1);
+  }, []);
+
+  const installSyncQueue = useCallback((account: User) => {
+    syncQueueCleanupRef.current?.();
+    let queue: DebouncedSyncQueue<{ merged: ProgressState; revision: number } | null>;
+    queue = new DebouncedSyncQueue(async () => {
+      const snapshot = stateRef.current;
+      const revision = localRevisionRef.current;
+      const tables = changedProgressTables(baselineRef.current,snapshot);
+      if (!tables.length) return null;
+      const latest = await loadProgress(account,tables,baselineRef.current);
+      if (syncQueueRef.current !== queue || localRevisionRef.current !== revision) return null;
+      const merged = mergeProgress(baselineRef.current, snapshot, latest);
+      await importLocalProgress(account, merged, true, latest);
+      return { merged, revision };
+    }, (status, error) => {
+      if (syncQueueRef.current !== queue) return;
+      setSyncState(status);
+      if (status === 'offline') setSyncError(error instanceof Error ? error.message : 'Progress could not be saved.');
+      else if (status === 'synced') setSyncError(null);
+    }, 600, (result, isLatest) => {
+      if (syncQueueRef.current !== queue || !result) return;
+      baselineRef.current = result.merged;
+      try { localStorage.setItem(`${PROGRESS_STORAGE_KEY}:baseline:${account.id}`, JSON.stringify(result.merged)); } catch { /* in-memory baseline remains valid */ }
+      // Never apply a response after another local edit was queued during its request.
+      if (isLatest && localRevisionRef.current === result.revision && JSON.stringify(result.merged) !== JSON.stringify(stateRef.current)) {
+        stateRef.current = result.merged;
+        setStateRaw(result.merged);
+      }
+    });
+    syncQueueRef.current = queue;
+    const onOnline = () => queue.retry();
+    window.addEventListener('online', onOnline);
+    const cleanup = () => {
+      window.removeEventListener('online', onOnline);
+      queue.dispose();
+      if (syncQueueRef.current === queue) syncQueueRef.current = null;
+      if (syncQueueCleanupRef.current === cleanup) syncQueueCleanupRef.current = null;
+    };
+    syncQueueCleanupRef.current = cleanup;
+    return cleanup;
+  }, []);
+
+  const setState = useCallback<Dispatch<SetStateAction<ProgressState>>>((next) => {
+    const current = stateRef.current;
+    const value = typeof next === 'function' ? next(current) : next;
+    if (value === current) return;
+    stateRef.current = value;
+    localRevisionRef.current += 1;
+    setStateRaw(value);
+    try { localStorage.setItem(`${PROGRESS_STORAGE_KEY}:${user.id}`, JSON.stringify(value)); } catch { /* pending state remains in memory */ }
+    syncQueueRef.current?.schedule();
+  }, [user.id]);
+
+  useEffect(() => {
+    let active = true;
+    const hadReadyState = readyRef.current;
+    const offlineSnapshot = stateRef.current;
+    const offlineBaseline = baselineRef.current;
+    readyRef.current = false;
+    setReady(false);
+    setSyncState('loading');
+    setSyncError(null);
+    const localKey = `${PROGRESS_STORAGE_KEY}:${user.id}`;
+    const baselineKey = `${PROGRESS_STORAGE_KEY}:baseline:${user.id}`;
+    let legacy: ProgressState | null = null;
+    try {
+      const raw = localStorage.getItem(PROGRESS_STORAGE_KEY);
+      if (raw) legacy = migrateState(JSON.parse(raw));
+    } catch { /* Keep cloud/default state when legacy storage is unreadable. */ }
+    void loadProgress(user).then(async (cloud) => {
+      if (!active) return;
+      const marker = `dsa-legacy-progress-reviewed:${user.id}`;
+      const hasLegacyData = Boolean(legacy && (Object.keys(legacy.problemProgress).length || Object.keys(legacy.videoProgress).length || legacy.sessions.length || legacy.mistakes.length || legacy.preferences.onboarded));
+      if (legacy && hasLegacyData && !localStorage.getItem(marker)) {
+        setMigrationChoice({ cloud, local: legacy });
+        return;
+      }
+      if (!active) return;
+      const remoteState = migrateState(cloud);
+      const scoped = localStorage.getItem(localKey);
+      const cachedState = scoped ? migrateState(JSON.parse(scoped)) : null;
+      const rawBaseline = localStorage.getItem(baselineKey);
+      const cachedBaseline = rawBaseline ? migrateState(JSON.parse(rawBaseline)) : createDefaultState();
+      const localCandidate = hadReadyState ? offlineSnapshot : cachedState;
+      const localBase = hadReadyState ? offlineBaseline : cachedBaseline;
+      const initial = migrateState(localCandidate ? mergeProgress(localBase, localCandidate, remoteState) : remoteState);
+      if (localCandidate && JSON.stringify(initial) !== JSON.stringify(remoteState)) {
+        await importLocalProgress(user, initial, true, remoteState);
+      }
+      baselineRef.current = initial;
+      localStorage.setItem(baselineKey, JSON.stringify(initial));
+      stateRef.current = initial;
+      setStateRaw(initial);
+      localStorage.setItem(localKey, JSON.stringify(initial));
+      installSyncQueue(user);
+      readyRef.current = true;
+      setReady(true);
+      setSyncState('synced');
+    }).catch((error: unknown) => {
+      if (!active) return;
+      const scoped = localStorage.getItem(localKey);
+      let fallback = createDefaultState();
+      try { if (scoped) fallback = migrateState(JSON.parse(scoped)); else if (legacy) fallback = legacy; } catch { /* use defaults */ }
+      try {
+        const savedBaseline = localStorage.getItem(baselineKey);
+        baselineRef.current = savedBaseline ? migrateState(JSON.parse(savedBaseline)) : fallback;
+      } catch { baselineRef.current = fallback; }
+      stateRef.current = fallback;
+      setStateRaw(fallback);
+      installSyncQueue(user);
+      readyRef.current = true;
+      setReady(true);
+      setSyncState('offline');
+      setSyncError(error instanceof Error ? error.message : 'Cloud progress could not be loaded.');
+    });
+    return () => {
+      active = false;
+      readyRef.current = false;
+      syncQueueCleanupRef.current?.();
+    };
+  }, [user, retryCount, installSyncQueue]);
+
+  const chooseLegacyImport = useCallback(async (shouldImport: boolean) => {
+    if (!migrationChoice) return;
+    setSyncState('syncing');
+    try {
+      if (shouldImport) {
+        await importLocalProgress(user, migrationChoice.local, false);
+      }
+      localStorage.setItem(`dsa-legacy-progress-reviewed:${user.id}`, shouldImport ? 'imported' : 'skipped');
+      const next = shouldImport ? await loadProgress(user) : migrationChoice.cloud;
+      const repaired = migrateState(next);
+      baselineRef.current = repaired;
+      localStorage.setItem(`${PROGRESS_STORAGE_KEY}:baseline:${user.id}`, JSON.stringify(repaired));
+      stateRef.current = repaired;
+      setStateRaw(repaired);
+      localStorage.setItem(`${PROGRESS_STORAGE_KEY}:${user.id}`, JSON.stringify(repaired));
+      setMigrationChoice(null);
+      installSyncQueue(user);
+      readyRef.current = true;
+      setReady(true);
+      setSyncState('synced');
+    } catch (error) {
+      setSyncError(error instanceof Error ? error.message : 'Local progress could not be imported. Your browser copy is unchanged.');
+      setSyncState('offline');
+    }
+  }, [migrationChoice, user, installSyncQueue]);
+
+  useEffect(() => {
+    if (!ready) return;
+    const localKey = `${PROGRESS_STORAGE_KEY}:${user.id}`;
+    try { localStorage.setItem(localKey, JSON.stringify(state)); } catch { /* offline memory still works */ }
+  }, [ready, state, user.id]);
 
   const updatePreferences = useCallback(
     (patch: Partial<UserPreferences>) => {
@@ -511,13 +707,13 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
     (problemId: string, type: MistakeType, note?: string) => {
       setState((s) => {
         const entry: MistakeLogEntry = {
-          id: `mistake-${Date.now()}`,
+          id: createMistakeId(),
           problemId,
           date: todayISO(),
           type,
           note,
         };
-        return { ...s, mistakes: [entry, ...s.mistakes] };
+        return prependMistake(s, entry);
       });
     },
     [setState],
@@ -658,14 +854,15 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
     [setState],
   );
 
-  const resetProgress = useCallback(() => {
-    resetStorage();
-  }, [resetStorage]);
+  const resetProgress = useCallback(() => { setState(createDefaultState()); }, [setState]);
 
   const value = useMemo<ProgressContextValue>(
     () => ({
       state,
       setState,
+      syncState,
+      syncError,
+      retrySync,
       updatePreferences,
       completeOnboarding,
       markVideoWatched,
@@ -691,6 +888,9 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
     [
       state,
       setState,
+      syncState,
+      syncError,
+      retrySync,
       updatePreferences,
       completeOnboarding,
       markVideoWatched,
@@ -715,6 +915,8 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
     ],
   );
 
+  if (migrationChoice) return <main className="auth-screen"><section className="migration-card"><h1>Import browser progress?</h1><p>This browser has older DSA progress. Importing adds rows that are missing in this account; existing cloud rows take precedence. Your browser copy will be kept.</p>{syncError && <p role="alert" className="auth-message error">{syncError}</p>}<div><button className="primary-btn" onClick={() => void chooseLegacyImport(true)} disabled={syncState === 'syncing'}>Import local progress</button><button className="secondary-btn" onClick={() => void chooseLegacyImport(false)} disabled={syncState === 'syncing'}>Use cloud account only</button></div></section></main>;
+  if (!ready) return <div className="auth-loading" role="status">Loading your saved progress…</div>;
   return <ProgressContext.Provider value={value}>{children}</ProgressContext.Provider>;
 }
 

@@ -11,6 +11,9 @@ src-tauri/target/
 .env.*
 !.env.example
 
+# Supabase CLI local project metadata and connection details
+supabase/.temp/
+
 # Editor / OS files
 .vscode/
 .idea/

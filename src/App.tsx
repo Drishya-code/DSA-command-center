@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useProgress } from '@/context/ProgressContext';
+import { useAuth } from '@/context/AuthContext';
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Pill, TopicStatusBadge } from '@/components/ui/Badge';
 import { computeAllTopicStats, computeOverallStats, computeWeakTopics } from '@/utils/analytics';
@@ -55,7 +56,10 @@ function useFocusTrap(active: boolean, containerRef: React.RefObject<HTMLElement
 }
 
 export default function App() {
-  const { state, setState, updatePreferences, resetProgress, exportData, importData, setCurrentTopic } = useProgress();
+  const { state, setState, updatePreferences, resetProgress, exportData, importData, setCurrentTopic, syncState, syncError, retrySync } = useProgress();
+  const { user, signOut } = useAuth();
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
   const [page, setPage] = useState<Page>('dashboard');
   const [query, setQuery] = useState('');
   const [selectedTopic, setSelectedTopic] = useState<string>('all');
@@ -130,7 +134,7 @@ export default function App() {
           <a href={CODOLIO_TRACKER_URL} target="_blank" rel="noreferrer">Open Codolio ↗<span className="sr-only"> (opens in new tab)</span></a>
           <a href={A2Z_SOURCE_URL} target="_blank" rel="noreferrer">Open TUF A2Z ↗<span className="sr-only"> (opens in new tab)</span></a>
         </div>
-        <div className="sidebar-foot">Local-first · Your data stays in this browser</div>
+        <div className="sidebar-foot">{user?.email} · Cloud progress</div>
       </aside>
 
       <main className="main" id="main-content" ref={mainRef} tabIndex={-1}>
@@ -138,6 +142,8 @@ export default function App() {
           <div><div className="eyebrow">{formatFriendlyDate(today)}</div><h1>{page === 'dashboard' ? dashboardGreeting(state.preferences.name) : pageTitle(page)}</h1></div>
           <div className="top-actions">
             <span className="streak-chip" aria-label={`Current streak: ${state.streak.current} days`}>✦ {state.streak.current} day streak</span>
+            <span className={`sync-indicator ${syncState}`} role="status">{syncState === 'synced' ? 'Synced' : syncState === 'syncing' ? 'Saving…' : syncState === 'loading' ? 'Loading…' : 'Offline'}</span>
+            {syncError && <button className="text-btn" onClick={retrySync} title={syncError}>Retry sync</button>}
             <span className="avatar" aria-hidden="true">{(state.preferences.name || 'D')[0].toUpperCase()}</span>
             <button
               className="theme-toggle"
@@ -147,8 +153,10 @@ export default function App() {
               <span className="icon" aria-hidden="true">{state.preferences.theme === 'light' ? '☾' : '☀'}</span>
               <span>{state.preferences.theme === 'light' ? 'Dark' : 'Light'}</span>
             </button>
+            <button className="theme-toggle" disabled={signingOut} onClick={async () => { setSigningOut(true); setSignOutError(null); try { await signOut(); } catch { setSigningOut(false); setSignOutError('Could not sign out. Check your connection and retry.'); } }} aria-label="Sign out">{signingOut ? 'Signing out…' : 'Sign out'}</button>
           </div>
         </header>
+        {signOutError && <p className="auth-message error" role="alert">{signOutError}</p>}
 
         {page === 'dashboard' && <Dashboard {...{state, overall, topicStats, weakTopics, plan, weekPct, setPage, setSelectedProblem}} />}
         {page === 'roadmap' && <Roadmap {...{topicStats, setSelectedTopic, setPage, state, setCurrentTopic}} />}
